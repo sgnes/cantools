@@ -1,6 +1,15 @@
 import can
 from cantools import database
+from cantools.database.can import Message
+import time
+from datetime import datetime
 
+
+class MessageInfor(object):
+    def __init__(self, can_msg, decoded_msg, db_msg):
+        self.can_msg = can_msg
+        self.decoded_msg = decoded_msg
+        self.db_msg = db_msg
 
 class Device(can.Listener):
     """
@@ -39,11 +48,42 @@ class Device(can.Listener):
                                        channel))
 
     def on_message_received(self, msg):
-        message = self._dbase.decode_message(msg.arbitration_id, msg.data)
+        try:
+            message = self._dbase.decode_message(msg.arbitration_id, msg.data)
+        except KeyError:
+            return
         if message:
             msg_ = self._dbase.get_message_by_frame_id(msg.arbitration_id)
-            self._message_by_name[msg_.name] = message
-            self._message_by_id[msg.arbitration_id] = message
+            msg_obj = MessageInfor(msg, message, msg_)
+            self._message_by_name[msg_.name] = msg_obj
+            self._message_by_id[msg.arbitration_id] = msg_obj
+
+    def is_msg_alive(self, message_name, timeout=5):
+        """
+        check whether a message is alive.
+        :param message_name: message name in database.
+        :param timeout: if cycle_time in database is not 0, the compared timeout value is: cycle_time*timeout;
+               else the compared timeout value is: timeout(seconds).
+        :return:
+        """
+        try:
+            msg = self._message_by_name[message_name]
+
+        except KeyError:
+            return None
+        current_timestamp = datetime.timestamp(datetime.now())
+        timestamp = msg.can_msg.timestamp
+        cycle_time = msg.db_msg.cycle_time
+        if cycle_time != 0:
+            if (1000 * (current_timestamp - timestamp)) > (timeout * cycle_time):
+                alive = 0
+            else:
+                alive = 1
+        elif ((current_timestamp - timestamp)) > timeout:
+            alive = 0
+        else:
+            alive = 1
+        return alive
 
     def get_signal_by_message(self, message_name, signal_name):
         """
@@ -56,7 +96,7 @@ class Device(can.Listener):
         """
         try:
             msg = self._message_by_name[message_name]
-            value = msg[signal_name]
+            value = msg.decoded_msg[signal_name]
         except KeyError:
             return None
 
